@@ -8,7 +8,7 @@
 
 use alloc::collections::TryReserveError;
 use alloc::vec::Vec;
-use core::iter::FusedIterator;
+use core::iter::{FromIterator, FusedIterator};
 use core::mem::MaybeUninit;
 use core::ops::{Index, IndexMut};
 
@@ -1267,6 +1267,49 @@ impl<K: Key, V> IntoIterator for DenseSlotMap<K, V> {
     }
 }
 
+impl<K: Key, V> FromIterator<(K, V)> for DenseSlotMap<K, V> {
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+        let mut sm = Self::with_key();
+
+        for (k, v) in iter {
+            let kd = k.data();
+            assert!(kd.idx > 0, "slot index 0 is reserved");
+            assert!(kd.idx < u32::MAX, "null keys are not supported");
+
+            let idx = kd.idx as usize;
+            if sm.slots.len() <= idx {
+                sm.slots.resize_with(idx + 1, || Slot {
+                    version: 0,
+                    idx_or_free: 0,
+                });
+            }
+
+            let slot = &mut sm.slots[idx];
+            if slot.version % 2 == 1 {
+                let value_idx = slot.idx_or_free as usize;
+                sm.keys[value_idx] = k;
+                sm.values[value_idx] = v;
+            } else {
+                slot.idx_or_free = sm.keys.len() as u32;
+                sm.keys.push(k);
+                sm.values.push(v);
+            }
+            slot.version = kd.version.get();
+        }
+
+        let mut next_free = sm.slots.len();
+        for (i, slot) in sm.slots.iter_mut().enumerate().skip(1) {
+            if slot.version % 2 == 0 {
+                slot.idx_or_free = next_free as u32;
+                next_free = i;
+            }
+        }
+        sm.free_head = next_free as u32;
+
+        sm
+    }
+}
+
 impl<'a, K: 'a + Key, V> FusedIterator for Iter<'a, K, V> {}
 impl<'a, K: 'a + Key, V> FusedIterator for IterMut<'a, K, V> {}
 impl<'a, K: 'a + Key, V> FusedIterator for Keys<'a, K, V> {}
@@ -1545,6 +1588,22 @@ mod tests {
             hmv.sort();
             smv == hmv
         }
+    }
+
+    #[test]
+    fn from_iter_reconstructs_keys_and_freelist() {
+        let k1: DefaultKey = KeyData::from_ffi((5u64 << 32) | 1).into();
+        let k3: DefaultKey = KeyData::from_ffi((7u64 << 32) | 3).into();
+
+        let mut sm: DenseSlotMap<DefaultKey, i32> = vec![(k3, 30), (k1, 10)].into_iter().collect();
+        assert_eq!(sm.len(), 2);
+        assert_eq!(sm.get(k1), Some(&10));
+        assert_eq!(sm.get(k3), Some(&30));
+
+        let expected: DefaultKey = KeyData::from_ffi((1u64 << 32) | 2).into();
+        let inserted = sm.insert(99);
+        assert_eq!(inserted, expected);
+        assert_eq!(sm.get(expected), Some(&99));
     }
 
     #[cfg(feature = "serde")]
