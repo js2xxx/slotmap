@@ -16,7 +16,7 @@
 use alloc::collections::TryReserveError;
 use alloc::vec::Vec;
 use core::fmt;
-use core::iter::{FromIterator, FusedIterator};
+use core::iter::FusedIterator;
 use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ops::{Index, IndexMut};
@@ -1327,87 +1327,6 @@ impl<K: Key, V> IntoIterator for HopSlotMap<K, V> {
     }
 }
 
-impl<K: Key, V> FromIterator<(K, V)> for HopSlotMap<K, V> {
-    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
-        let mut slots = Vec::new();
-        slots.push(Slot {
-            u: SlotUnion {
-                free: FreeListEntry {
-                    next: 0,
-                    prev: 0,
-                    other_end: 0,
-                },
-            },
-            version: 0,
-        });
-
-        for (k, v) in iter {
-            let kd = k.data();
-            assert!(kd.idx > 0, "slot index 0 is reserved");
-            assert!(kd.idx < u32::MAX, "null keys are not supported");
-
-            let idx = kd.idx as usize;
-            if slots.len() <= idx {
-                slots.resize_with(idx + 1, || Slot {
-                    u: SlotUnion {
-                        free: FreeListEntry {
-                            next: 0,
-                            prev: 0,
-                            other_end: 0,
-                        },
-                    },
-                    version: 0,
-                });
-            }
-
-            slots[idx] = Slot {
-                u: SlotUnion {
-                    value: ManuallyDrop::new(v),
-                },
-                version: kd.version.get(),
-            };
-        }
-
-        slots[0].u.free = FreeListEntry {
-            next: 0,
-            prev: 0,
-            other_end: 0,
-        };
-
-        let mut num_elems = 0;
-        let mut prev = 0;
-        let mut i = 0;
-        while i < slots.len() {
-            let front = i;
-            while i < slots.len() && !slots[i].occupied() {
-                i += 1;
-            }
-            let back = i - 1;
-
-            slots[back].u.free.other_end = front as u32;
-            slots[prev].u.free.next = front as u32;
-            slots[front].u.free = FreeListEntry {
-                next: 0,
-                prev: prev as u32,
-                other_end: back as u32,
-            };
-
-            prev = front;
-
-            while i < slots.len() && slots[i].occupied() {
-                num_elems += 1;
-                i += 1;
-            }
-        }
-
-        Self {
-            slots,
-            num_elems,
-            _k: PhantomData,
-        }
-    }
-}
-
 impl<'a, K: Key, V> FusedIterator for Iter<'a, K, V> {}
 impl<'a, K: Key, V> FusedIterator for IterMut<'a, K, V> {}
 impl<'a, K: Key, V> FusedIterator for Keys<'a, K, V> {}
@@ -1721,22 +1640,6 @@ mod tests {
             hmv.sort();
             smv == hmv
         }
-    }
-
-    #[test]
-    fn from_iter_reconstructs_keys_and_freelist() {
-        let k1: DefaultKey = KeyData::from_ffi((5u64 << 32) | 1).into();
-        let k3: DefaultKey = KeyData::from_ffi((7u64 << 32) | 3).into();
-
-        let mut sm: HopSlotMap<DefaultKey, i32> = vec![(k3, 30), (k1, 10)].into_iter().collect();
-        assert_eq!(sm.len(), 2);
-        assert_eq!(sm.get(k1), Some(&10));
-        assert_eq!(sm.get(k3), Some(&30));
-
-        let expected: DefaultKey = KeyData::from_ffi((1u64 << 32) | 2).into();
-        let inserted = sm.insert(99);
-        assert_eq!(inserted, expected);
-        assert_eq!(sm.get(expected), Some(&99));
     }
 
     #[cfg(feature = "serde")]

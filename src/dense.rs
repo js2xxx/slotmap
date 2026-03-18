@@ -1285,15 +1285,10 @@ impl<K: Key, V> FromIterator<(K, V)> for DenseSlotMap<K, V> {
             }
 
             let slot = &mut sm.slots[idx];
-            if slot.version % 2 == 1 {
-                let value_idx = slot.idx_or_free as usize;
-                sm.keys[value_idx] = k;
-                sm.values[value_idx] = v;
-            } else {
-                slot.idx_or_free = sm.keys.len() as u32;
-                sm.keys.push(k);
-                sm.values.push(v);
-            }
+            assert!(slot.version % 2 == 0, "duplicate key position");
+            slot.idx_or_free = sm.keys.len() as u32;
+            sm.keys.push(k);
+            sm.values.push(v);
             slot.version = kd.version.get();
         }
 
@@ -1604,6 +1599,13 @@ mod tests {
         let inserted = sm.insert(99);
         assert_eq!(inserted, expected);
         assert_eq!(sm.get(expected), Some(&99));
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate key position")]
+    fn from_iter_duplicate_key_panics() {
+        let k: DefaultKey = KeyData::from_ffi((5u64 << 32) | 1).into();
+        let _: DenseSlotMap<DefaultKey, i32> = vec![(k, 10), (k, 20)].into_iter().collect();
     }
 
     #[cfg(feature = "serde")]

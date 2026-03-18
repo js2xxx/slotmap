@@ -1295,6 +1295,7 @@ impl<K: Key, V> FromIterator<(K, V)> for SlotMap<K, V> {
                 });
             }
 
+            assert!(!slots[idx].occupied(), "duplicate key position");
             slots[idx] = Slot {
                 u: SlotUnion {
                     value: ManuallyDrop::new(v),
@@ -1630,6 +1631,13 @@ mod tests {
         let inserted = sm.insert(99);
         assert_eq!(inserted, expected);
         assert_eq!(sm.get(expected), Some(&99));
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate key position")]
+    fn from_iter_duplicate_key_panics() {
+        let k: DefaultKey = KeyData::from_ffi((5u64 << 32) | 1).into();
+        let _: SlotMap<DefaultKey, i32> = vec![(k, 10), (k, 20)].into_iter().collect();
     }
 
     #[cfg(feature = "serde")]
