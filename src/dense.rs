@@ -1285,7 +1285,7 @@ impl<K: Key, V> FromIterator<(K, V)> for DenseSlotMap<K, V> {
             }
 
             let slot = &mut sm.slots[idx];
-            assert!(slot.version % 2 == 0, "duplicate key position");
+            assert!(slot.version % 2 == 0, "duplicate key at position {}", idx);
             slot.idx_or_free = sm.keys.len() as u32;
             sm.keys.push(k);
             sm.values.push(v);
@@ -1602,7 +1602,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "duplicate key position")]
+    #[should_panic(expected = "duplicate key at position")]
     fn from_iter_duplicate_key_panics() {
         let k: DefaultKey = KeyData::from_ffi((5u64 << 32) | 1).into();
         let _: DenseSlotMap<DefaultKey, i32> = vec![(k, 10), (k, 20)].into_iter().collect();
